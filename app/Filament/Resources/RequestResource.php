@@ -1,10 +1,11 @@
 <?php
-// app/Filament/Resources/RequestResource.php
+
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\RequestResource\Pages;
 use App\Models\Request;
 use App\Models\Department;
+use App\Models\Company;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -26,54 +27,67 @@ class RequestResource extends Resource
     public static function canAccess(): bool
     {
         return true;
-        //auth()->user()->can('manage_own_requests') || 
-         //   auth()->user()->can('view_all_requests');
     }
 
     public static function canCreate(): bool
     {
         return true;
-        //auth()->user()->can('manage_own_requests');
     }
 
     public static function form(Form $form): Form
     {
         return $form
             ->schema([
-                    Forms\Components\Section::make('Request Information')
-                        ->schema([
-                            Forms\Components\Grid::make(3)
-                                ->schema([
-                                    Forms\Components\TextInput::make('request_number')
-                                        ->label('Request Number')
-                                        ->disabled()
-                                        ->placeholder('Auto Generated')
-                                        ->dehydrated(false),
+                Section::make('Request Information')
+                    ->schema([
+                        Forms\Components\Grid::make(4)
+                            ->schema([
+                                Forms\Components\TextInput::make('request_number')
+                                    ->label('Request Number')
+                                    ->disabled()
+                                    ->placeholder('Auto Generated')
+                                    ->dehydrated(false),
+                                    
+                                Forms\Components\DatePicker::make('request_date')
+                                    ->label('Request Date')
+                                    ->required()
+                                    ->default(now())
+                                    ->displayFormat('d/m/Y')
+                                    ->disabled(fn ($context) => $context !== 'create'),
+                                    
+                                Forms\Components\Select::make('company_id')
+                                    ->label('Company')
+                                    ->relationship('company', 'name')
+                                    ->required()
+                                    ->default(fn() => auth()->user()?->company_id)
+                                    ->disabled(fn ($context) => $context !== 'create')
+                                    ->preload()
+                                    ->searchable()
+                                    ->live()
+                                    ->afterStateUpdated(fn ($state, Forms\Set $set) => $set('department_id', null)),
+                                    
+                                Forms\Components\Select::make('department_id')
+                                    ->label('Department')
+                                    ->options(function (Forms\Get $get) {
+                                        $companyId = $get('company_id');
+                                        if (!$companyId) return [];
                                         
-                                    Forms\Components\DatePicker::make('request_date')
-                                        ->label('Request Date')
-                                        ->required()
-                                        ->default(now())
-                                        ->disabled()
-                                        ->displayFormat('d/m/Y')
-                                        ->dehydrated(true),
-                                        
-                                    Forms\Components\Select::make('department_id')
-                                        ->label('Department')
-                                        ->relationship('department', 'name')
-                                        ->required()
-                                        ->default(fn() => auth()->user()?->department_id)
-                                        ->disabled()
-                                        ->preload()
-                                        ->dehydrated(true)
-                                ]),
-                                
-                            Forms\Components\Textarea::make('notes')
-                                ->label('Notes')
-                                ->rows(3)
-                                ->columnSpanFull(),
-                        ]),
-                
+                                        return Department::where('company_id', $companyId)
+                                            ->pluck('name', 'id');
+                                    })
+                                    ->required()
+                                    ->default(fn() => auth()->user()?->department_id)
+                                    ->disabled(fn ($context) => $context !== 'create')
+                                    ->searchable()
+                                    ->preload(),
+                            ]),
+                            
+                        Forms\Components\Textarea::make('notes')
+                            ->label('Notes')
+                            ->rows(3)
+                            ->columnSpanFull(),
+                    ]),
+            
                 Section::make('Request Items')
                     ->schema([
                         Repeater::make('items')
@@ -90,30 +104,32 @@ class RequestResource extends Resource
                                         Forms\Components\TextInput::make('description')
                                             ->required()
                                             ->columnSpan(2),
+                                            
                                         Forms\Components\Textarea::make('specification')
                                             ->required()
                                             ->rows(1)
                                             ->columnSpan(2),
+                                            
                                         Forms\Components\TextInput::make('quantity')
                                             ->numeric()
                                             ->required()
                                             ->columnSpan(2),
-                                    ]),
-                                Forms\Components\Grid::make(2)
-                                    ->schema([
+                                            
                                         Forms\Components\TextInput::make('unit_of_measurement')
                                             ->required()
-                                            ->placeholder('Unit, Pcs, Kg, etc'),
-                                        Forms\Components\Textarea::make('remarks')
-                                            ->rows(1),
+                                            ->placeholder('Unit, Pcs, Kg, etc')
+                                            ->columnSpan(2),
                                     ]),
+                                    
+                                Forms\Components\Textarea::make('remarks')
+                                    ->rows(1)
+                                    ->columnSpanFull(),
                             ])
                             ->minItems(1)
                             ->addActionLabel('Add Item')
                             ->collapsible()
                             ->itemLabel(fn (array $state): ?string => $state['description'] ?? null)
-                            ->columnSpanFull()
-                           
+                            ->columnSpanFull(),
                     ]),
             ]);
     }
@@ -124,15 +140,27 @@ class RequestResource extends Resource
             ->columns([
                 Tables\Columns\TextColumn::make('request_number')
                     ->searchable()
+                    ->sortable()
+                    ->copyable(),
+                    
+                Tables\Columns\TextColumn::make('company.code')
+                    ->label('Company')
+                    ->badge()
+                    ->color('primary')
+                    ->searchable()
                     ->sortable(),
+                    
                 Tables\Columns\TextColumn::make('request_date')
                     ->date('d/m/Y')
                     ->sortable(),
+                    
                 Tables\Columns\TextColumn::make('user.name')
                     ->label('Requested By')
                     ->searchable(),
+                    
                 Tables\Columns\TextColumn::make('department.name')
                     ->searchable(),
+                    
                 Tables\Columns\BadgeColumn::make('status')
                     ->colors([
                         'secondary' => 'draft',
@@ -142,11 +170,17 @@ class RequestResource extends Resource
                         'success' => 'completed',
                         'danger' => 'rejected',
                     ]),
+                    
                 Tables\Columns\TextColumn::make('items_count')
                     ->counts('items')
                     ->label('Items'),
             ])
             ->filters([
+                Tables\Filters\SelectFilter::make('company')
+                    ->relationship('company', 'name')
+                    ->searchable()
+                    ->preload(),
+                    
                 Tables\Filters\SelectFilter::make('status')
                     ->options([
                         'draft' => 'Draft',
@@ -156,17 +190,24 @@ class RequestResource extends Resource
                         'completed' => 'Completed',
                         'rejected' => 'Rejected',
                     ]),
+                    
                 Tables\Filters\SelectFilter::make('department')
-                    ->relationship('department', 'name'),
+                    ->relationship('department', 'name')
+                    ->searchable()
+                    ->preload(),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
                 Tables\Actions\EditAction::make()
                     ->visible(fn (Request $record): bool => $record->canBeEditedBy(auth()->user())),
+                    
                 Action::make('submit')
                     ->icon('heroicon-o-paper-airplane')
                     ->color('success')
-                    ->visible(fn (Request $record): bool => $record->status === 'draft' && $record->user_id === auth()->id())
+                    ->visible(fn (Request $record): bool => 
+                        $record->status === 'draft' && 
+                        $record->user_id === auth()->id()
+                    )
                     ->requiresConfirmation()
                     ->action(function (Request $record) {
                         $record->update(['status' => 'submitted']);
@@ -177,6 +218,7 @@ class RequestResource extends Resource
                             ->success()
                             ->send();
                     }),
+                    
                 Action::make('approve')
                     ->icon('heroicon-o-check-circle')
                     ->color('success')
@@ -189,6 +231,7 @@ class RequestResource extends Resource
                     ->action(function (Request $record, array $data) {
                         static::processApproval($record, $data['comments'] ?? null);
                     }),
+                    
                 Action::make('downloadPdf')
                     ->icon('heroicon-o-document-arrow-down')
                     ->color('primary')
@@ -197,20 +240,24 @@ class RequestResource extends Resource
             ])
             ->bulkActions([
                 Tables\Actions\DeleteBulkAction::make()
-                    ->visible(fn (): bool => auth()->user()->can('delete_request')),
+                    ->visible(fn (): bool => auth()->user()->can('manage_system')),
             ]);
     }
 
     protected static function createApprovalRecords(Request $request): void
     {
         $approvalRoles = [
-            ['role' => 'section_head', 'department_specific' => true],
-            ['role' => 'scm_head', 'department_specific' => false],
-            ['role' => 'pjo', 'department_specific' => false],
+            ['role' => 'section_head', 'company_specific' => true, 'department_specific' => true],
+            ['role' => 'scm_head', 'company_specific' => false, 'department_specific' => false],
+            ['role' => 'pjo', 'company_specific' => true, 'department_specific' => false],
         ];
 
         foreach ($approvalRoles as $approval) {
             $query = \App\Models\User::role($approval['role']);
+            
+            if ($approval['company_specific']) {
+                $query->where('company_id', $request->company_id);
+            }
             
             if ($approval['department_specific']) {
                 $query->where('department_id', $request->department_id);
@@ -231,21 +278,29 @@ class RequestResource extends Resource
 
     protected static function processApproval(Request $request, ?string $comments): void
     {
-        $userRoles = auth()->user()->getRoleNames()->toArray();
+        $user = auth()->user();
         
         $currentRole = match ($request->status) {
             'submitted' => 'section_head',
-            'section_approved' => 'scm_head',
+            'section_approved' => 'scm_head', 
             'scm_approved' => 'pjo',
             default => null
         };
 
-        if ($currentRole && in_array($currentRole, $userRoles)) {
-            $approval = $request->approvals()
-                ->where('user_id', auth()->id())
+        if ($currentRole && $user->hasRole($currentRole)) {
+            $approvalQuery = $request->approvals()
+                ->where('user_id', $user->id)
                 ->where('role', $currentRole)
-                ->where('status', 'pending')
-                ->first();
+                ->where('status', 'pending');
+                
+            // For company-specific roles, add company check
+            if (in_array($currentRole, ['section_head', 'pjo'])) {
+                $approvalQuery->whereHas('request', function ($q) use ($user) {
+                    $q->where('company_id', $user->company_id);
+                });
+            }
+            
+            $approval = $approvalQuery->first();
 
             if ($approval) {
                 $approval->approve($comments);
@@ -263,42 +318,50 @@ class RequestResource extends Resource
         $query = parent::getEloquentQuery();
         $user = auth()->user();
 
-        // Admin can see all
+        // Super admin dapat melihat semua
         if ($user->hasRole('admin')) {
             return $query;
         }
 
-        // Users can only see their own requests
-        if ($user->hasRole('user')) {
+        // Users hanya dapat melihat request mereka sendiri
+        if ($user->hasRole('user') && !$user->hasAnyRole(['section_head', 'scm_head', 'pjo'])) {
             return $query->where('user_id', $user->id);
         }
 
-        // Approvers see requests based on workflow
+        // Approvers melihat berdasarkan workflow dan company
+        $companyQuery = function ($q) use ($user) {
+            $q->where('user_id', $user->id); // Own requests
+        };
+
         if ($user->hasRole('section_head')) {
-            return $query->where(function ($q) use ($user) {
+            $companyQuery = function ($q) use ($user) {
                 $q->where('user_id', $user->id)
                   ->orWhere(function ($subQ) use ($user) {
                       $subQ->where('status', 'submitted')
+                           ->where('company_id', $user->company_id)
                            ->where('department_id', $user->department_id);
                   });
-            });
+            };
         }
 
         if ($user->hasRole('scm_head')) {
-            return $query->where(function ($q) use ($user) {
+            $companyQuery = function ($q) use ($user) {
                 $q->where('user_id', $user->id)
-                  ->orWhere('status', 'section_approved');
-            });
+                  ->orWhere('status', 'section_approved'); // SCM can see all section-approved
+            };
         }
 
         if ($user->hasRole('pjo')) {
-            return $query->where(function ($q) use ($user) {
+            $companyQuery = function ($q) use ($user) {
                 $q->where('user_id', $user->id)
-                  ->orWhere('status', 'scm_approved');
-            });
+                  ->orWhere(function ($subQ) use ($user) {
+                      $subQ->where('status', 'scm_approved')
+                           ->where('company_id', $user->company_id);
+                  });
+            };
         }
 
-        return $query;
+        return $query->where($companyQuery);
     }
 
     public static function getPages(): array
@@ -306,7 +369,6 @@ class RequestResource extends Resource
         return [
             'index' => Pages\ListRequests::route('/'),
             'create' => Pages\CreateRequest::route('/create'),
-            //'view' => Pages\ViewRequest::route('/{record}'),
             'edit' => Pages\EditRequest::route('/{record}/edit'),
         ];
     }

@@ -20,19 +20,30 @@ class CreateUser extends CreateRecord
 
     protected function mutateFormDataBeforeCreate(array $data): array
     {
-        // Set email verified if not specified
-        if (!isset($data['email_verified'])) {
-            $data['email_verified_at'] = now();
-        } elseif ($data['email_verified']) {
+        // Set email verified if the toggle was checked
+        if (isset($data['email_verified']) && $data['email_verified']) {
             $data['email_verified_at'] = now();
         }
+
+        // Remove the roles field - we'll handle it separately
+        unset($data['email_verified'], $data['roles']);
 
         return $data;
     }
 
     protected function afterCreate(): void
     {
-        // Send welcome email or other post-creation tasks
-        // $this->record->notify(new WelcomeNotification());
+        // Handle role assignment after user creation
+        $formData = $this->form->getState();
+        
+        if (isset($formData['roles']) && !empty($formData['roles'])) {
+            // Get role IDs and assign using Spatie method
+            $roleIds = collect($formData['roles']);
+            $roles = \Spatie\Permission\Models\Role::whereIn('id', $roleIds)->get();
+            
+            foreach ($roles as $role) {
+                $this->record->assignRole($role->name);
+            }
+        }
     }
 }
