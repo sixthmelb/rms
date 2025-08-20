@@ -52,42 +52,35 @@ class DepartmentResource extends Resource
                                     $company = Company::find($state);
                                     if ($company) {
                                         $deptCount = Department::where('company_id', $state)->count();
-                                        $suggestedCode = 'DEPT' . str_pad($deptCount + 1, 2, '0', STR_PAD_LEFT);
+                                        $suggestedCode = 'DEPT' . str_pad($deptCount + 1, 3, '0', STR_PAD_LEFT);
                                         $set('code', $suggestedCode);
                                     }
                                 }
                             })
-                            ->createOptionForm([
-                                Forms\Components\TextInput::make('name')
-                                    ->required()
-                                    ->maxLength(255),
-                                Forms\Components\TextInput::make('code')
-                                    ->required()
-                                    ->maxLength(10)
-                                    ->unique('companies', 'code'),
-                                Forms\Components\Toggle::make('is_active')
-                                    ->default(true),
-                            ])
                             ->columnSpan(2),
 
                         Forms\Components\TextInput::make('name')
+                            ->label('Department Name')
                             ->required()
                             ->maxLength(255)
-                            ->placeholder('Engineering, Operations, Human Resources, etc.')
                             ->live(onBlur: true)
                             ->afterStateUpdated(function ($state, Forms\Set $set, Forms\Get $get) {
                                 // Auto-generate code from name if not set
                                 if ($state && !$get('code')) {
                                     $code = strtoupper(substr(preg_replace('/[^A-Za-z]/', '', $state), 0, 3));
+                                    if (strlen($code) < 3) {
+                                        $code = 'DEPT';
+                                    }
                                     $set('code', $code);
                                 }
                             })
                             ->columnSpan(2),
 
                         Forms\Components\TextInput::make('code')
+                            ->label('Department Code')
                             ->required()
                             ->maxLength(10)
-                            ->placeholder('ENG, OPS, HR, etc.')
+                            ->alphaDash()
                             ->unique(ignoreRecord: true)
                             ->rules([
                                 function (Forms\Get $get) {
@@ -134,11 +127,10 @@ class DepartmentResource extends Resource
 
                         Forms\Components\Placeholder::make('section_head')
                             ->label('Section Head')
-                            ->content(fn ($record): string => $record?->getSectionHead()?->name ?? 'Not assigned')
+                            ->content(fn ($record): string => $record ? 
+                                ($record->getSectionHead()?->name ?? 'Not assigned') : 'N/A')
                             ->visible(fn ($context) => $context === 'edit' || $context === 'view'),
-                    ])
-                    ->columns(4)
-                    ->visible(fn ($context) => $context !== 'create'),
+                    ])->columns(4),
             ]);
     }
 
@@ -146,7 +138,7 @@ class DepartmentResource extends Resource
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('company.code')
+                Tables\Columns\TextColumn::make('company.name')
                     ->label('Company')
                     ->badge()
                     ->color('primary')
@@ -154,101 +146,94 @@ class DepartmentResource extends Resource
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('name')
+                    ->label('Department')
                     ->searchable()
                     ->sortable()
-                    ->wrap()
-                    ->weight('medium'),
+                    ->description(fn (Department $record): string => "Code: {$record->code}"),
 
                 Tables\Columns\TextColumn::make('code')
-                    ->searchable()
-                    ->sortable()
+                    ->label('Code')
                     ->badge()
                     ->color('secondary')
-                    ->copyable(),
+                    ->searchable()
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('users_count')
-                    ->counts('users')
                     ->label('Users')
+                    ->getStateUsing(fn (Department $record): int => $record->users()->count())
                     ->badge()
-                    ->color('info')
+                    ->color(fn ($state): string => match (true) {
+                        $state === 0 => 'danger',
+                        $state <= 5 => 'warning',
+                        default => 'success',
+                    })
                     ->sortable(),
 
-                Tables\Columns\TextColumn::make('active_requests_count')
-                    ->label('Active Requests')
-                    ->getStateUsing(fn ($record) => $record->requests()->whereNotIn('status', ['completed', 'rejected'])->count())
-                    ->badge()
-                    ->color(fn ($state) => $state > 0 ? 'warning' : 'success')
-                    ->sortable(),
-
-                Tables\Columns\TextColumn::make('completed_requests_count')
-                    ->label('Completed')
-                    ->getStateUsing(fn ($record) => $record->requests()->where('status', 'completed')->count())
-                    ->badge()
-                    ->color('success')
-                    ->sortable(),
-
-                Tables\Columns\TextColumn::make('section_head.name')
+                Tables\Columns\TextColumn::make('section_head')
                     ->label('Section Head')
-                    ->getStateUsing(fn ($record) => $record->getSectionHead()?->name)
-                    ->placeholder('Not assigned')
-                    ->icon('heroicon-m-user-circle')
-                    ->iconColor('primary')
-                    ->searchable()
-                    ->toggleable(),
+                    ->getStateUsing(fn (Department $record): string => $record->getSectionHead()?->name ?? 'Not assigned')
+                    ->badge()
+                    ->color(fn ($state): string => $state === 'Not assigned' ? 'danger' : 'success')
+                    ->icon(fn ($state): string => $state === 'Not assigned' ? 'heroicon-o-x-circle' : 'heroicon-o-check-circle'),
+
+                Tables\Columns\TextColumn::make('active_requests')
+                    ->label('Active')
+                    ->getStateUsing(fn (Department $record): int => $record->getActiveRequestsCount())
+                    ->badge()
+                    ->color(fn ($state): string => $state > 0 ? 'warning' : 'gray')
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('created_at')
-                    ->dateTime('d/m/Y')
+                    ->label('Created')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                SelectFilter::make('company')
+                SelectFilter::make('company_id')
+                    ->label('Company')
                     ->relationship('company', 'name')
                     ->searchable()
-                    ->preload()
-                    ->multiple()
-                    ->label('Company Filter'),
+                    ->preload(),
 
-                SelectFilter::make('has_section_head')
-                    ->label('Section Head Status')
-                    ->options([
-                        'yes' => 'Has Section Head',
-                        'no' => 'No Section Head',
-                    ])
-                    ->query(function (Builder $query, array $data): Builder {
-                        return $query->when(
-                            $data['value'] === 'yes',
-                            fn (Builder $query): Builder => $query->whereHas('users', function ($q) {
-                                $q->role('section_head');
-                            }),
-                            fn (Builder $query): Builder => $query->when(
-                                $data['value'] === 'no',
-                                fn (Builder $query): Builder => $query->whereDoesntHave('users', function ($q) {
-                                    $q->role('section_head');
-                                })
-                            )
-                        );
-                    }),
+                Tables\Filters\Filter::make('has_section_head')
+                    ->label('Has Section Head')
+                    ->query(fn (Builder $query): Builder => 
+                        $query->whereHas('users', function ($q) {
+                            $q->role('section_head');
+                        })
+                    )
+                    ->toggle(),
+
+                Tables\Filters\Filter::make('no_section_head')
+                    ->label('Missing Section Head')
+                    ->query(fn (Builder $query): Builder => 
+                        $query->whereDoesntHave('users', function ($q) {
+                            $q->role('section_head');
+                        })
+                    )
+                    ->toggle(),
 
                 Tables\Filters\Filter::make('active_departments')
-                    ->label('With Active Requests')
-                    ->query(fn (Builder $query): Builder => $query->whereHas('requests', function ($q) {
-                        $q->whereNotIn('status', ['completed', 'rejected']);
-                    }))
+                    ->label('Has Users')
+                    ->query(fn (Builder $query): Builder => $query->whereHas('users'))
                     ->toggle(),
             ])
             ->actions([
-                Tables\Actions\ViewAction::make(),
-                Tables\Actions\EditAction::make(),
+                Tables\Actions\ViewAction::make()
+                    ->color('info'),
 
-                Action::make('assignSectionHead')
-                    ->label('Assign Section Head')
+                Tables\Actions\EditAction::make()
+                    ->color('warning'),
+
+                Action::make('assign_section_head')
+                    ->label('Assign Head')
                     ->icon('heroicon-o-user-plus')
-                    ->color('primary')
+                    ->color('success')
                     ->visible(fn (Department $record): bool => !$record->getSectionHead())
                     ->form([
                         Forms\Components\Select::make('user_id')
-                            ->label('Select User')
+                            ->label('Select Section Head')
                             ->options(function (Department $record) {
                                 return $record->users()
                                     ->whereDoesntHave('roles', function ($q) {
@@ -256,42 +241,32 @@ class DepartmentResource extends Resource
                                     })
                                     ->pluck('name', 'id');
                             })
-                            ->searchable()
                             ->required()
-                            ->helperText('Select a user from this department to assign as Section Head'),
+                            ->searchable(),
                     ])
-                    ->action(function (Department $record, array $data) {
-                        $user = \App\Models\User::find($data['user_id']);
-                        if ($user) {
-                            $user->assignRole('section_head');
-                            
+                    ->action(function (array $data, Department $record): void {
+                        $user = $record->users()->find($data['user_id']);
+                        if ($user && $record->assignSectionHead($user)) {
                             Notification::make()
-                                ->title('Section Head assigned successfully')
-                                ->body("{$user->name} is now the Section Head of {$record->name}")
+                                ->title('Section Head Assigned')
+                                ->body("Successfully assigned {$user->name} as section head.")
                                 ->success()
+                                ->send();
+                        } else {
+                            Notification::make()
+                                ->title('Assignment Failed')
+                                ->body('Failed to assign section head.')
+                                ->danger()
                                 ->send();
                         }
                     }),
 
-                Action::make('viewUsers')
-                    ->label('View Users')
-                    ->icon('heroicon-o-users')
-                    ->color('info')
-                    ->url(fn (Department $record): string => "/admin/users?tableFilters[department][value]={$record->id}")
-                    ->openUrlInNewTab(),
-
-                Action::make('viewRequests')
-                    ->label('View Requests')
-                    ->icon('heroicon-o-document-text')
-                    ->color('warning')
-                    ->url(fn (Department $record): string => "/admin/requests?tableFilters[department][value]={$record->id}")
-                    ->openUrlInNewTab(),
-
                 Tables\Actions\DeleteAction::make()
-                    ->visible(fn (Department $record) => $record->users()->count() === 0)
-                    ->requiresConfirmation()
-                    ->modalHeading('Delete Department')
-                    ->modalDescription('Are you sure you want to delete this department? This action cannot be undone.')
+                    ->visible(fn (Department $record): bool => 
+                        $record->users()->count() === 0 && 
+                        $record->requests()->count() === 0
+                    )
+                    ->modalDescription('This action will permanently delete the department. This action cannot be undone.')
                     ->modalSubmitActionLabel('Yes, delete it'),
             ])
             ->bulkActions([
@@ -322,7 +297,6 @@ class DepartmentResource extends Resource
                         }),
                 ]),
             ])
-            // ✅ FIXED: Use column that exists in departments table
             ->defaultSort('name', 'asc')
             ->groups([
                 Tables\Grouping\Group::make('company.name')
@@ -331,13 +305,13 @@ class DepartmentResource extends Resource
             ]);
     }
 
-    // ✅ FIXED: Proper eager loading with join
+    // ✅ FIX: Remove manual join, use Eloquent relationships instead
     public static function getEloquentQuery(): Builder
     {
         return parent::getEloquentQuery()
-            ->with(['company', 'users'])
-            ->join('companies', 'companies.id', '=', 'departments.company_id')
-            ->select('departments.*', 'companies.name as company_name', 'companies.code as company_code');
+            ->with(['company', 'users' => function ($query) {
+                $query->role('section_head');
+            }]);
     }
 
     public static function getPages(): array
@@ -364,14 +338,8 @@ class DepartmentResource extends Resource
         ];
     }
 
-    public static function getNavigationBadge(): ?string
+    public static function getGlobalSearchResultUrl(Model $record): string
     {
-        $activeCount = static::getEloquentQuery()
-            ->whereHas('requests', function ($q) {
-                $q->whereNotIn('status', ['completed', 'rejected']);
-            })
-            ->count();
-
-        return $activeCount > 0 ? (string) $activeCount : null;
+        return DepartmentResource::getUrl('view', ['record' => $record]);
     }
 }

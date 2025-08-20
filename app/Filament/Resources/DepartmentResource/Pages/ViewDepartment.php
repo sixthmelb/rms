@@ -85,8 +85,7 @@ class ViewDepartment extends ViewRecord
                                 Infolists\Components\TextEntry::make('created_at')
                                     ->dateTime('d/m/Y H:i'),
                             ])
-                            ->columns(4)
-                            ->limit(5),
+                            ->columns(4),
                     ])
                     ->collapsible(),
             ]);

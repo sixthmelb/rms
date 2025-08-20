@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\UserResource\Pages;
 use App\Models\User;
 use App\Models\Department;
+use App\Models\Company;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -36,38 +37,47 @@ class UserResource extends Resource
         return $form
             ->schema([
                 Section::make('Personal Information')
+                    ->description('Basic user information and credentials')
                     ->schema([
                         Forms\Components\TextInput::make('name')
                             ->required()
-                            ->maxLength(255),
+                            ->maxLength(255)
+                            ->columnSpan(2),
 
                         Forms\Components\TextInput::make('email')
                             ->email()
                             ->required()
                             ->unique(ignoreRecord: true)
-                            ->maxLength(255),
+                            ->maxLength(255)
+                            ->columnSpan(2),
 
                         Forms\Components\TextInput::make('employee_id')
                             ->label('Employee ID')
                             ->required()
                             ->unique(ignoreRecord: true)
                             ->maxLength(255)
-                            ->placeholder('EMP001'),
+                            ->placeholder('EMP001')
+                            ->columnSpan(1),
 
                         Forms\Components\TextInput::make('position')
                             ->maxLength(255)
-                            ->placeholder('Staff, Manager, etc.'),
-                    ])->columns(2),
+                            ->placeholder('Staff, Manager, etc.')
+                            ->columnSpan(1),
+                    ])->columns(4),
 
                 Section::make('Company & Department')
+                    ->description('Organizational assignment and access rights')
                     ->schema([
                         Forms\Components\Select::make('company_id')
+                            ->label('Company')
                             ->relationship('company', 'name')
                             ->searchable()
-                            ->preload()
                             ->required()
                             ->live()
-                            ->afterStateUpdated(fn ($state, Forms\Set $set) => $set('department_id', null))
+                            ->afterStateUpdated(function ($state, Forms\Set $set) {
+                                // Reset department when company changes
+                                $set('department_id', null);
+                            })
                             ->createOptionForm([
                                 Forms\Components\TextInput::make('name')
                                     ->required()
@@ -76,18 +86,35 @@ class UserResource extends Resource
                                     ->required()
                                     ->maxLength(10)
                                     ->unique('companies', 'code'),
-                            ]),
+                                Forms\Components\TextInput::make('address')
+                                    ->maxLength(500),
+                                Forms\Components\TextInput::make('phone')
+                                    ->maxLength(20),
+                                Forms\Components\TextInput::make('email')
+                                    ->email()
+                                    ->maxLength(255),
+                            ])
+                            ->columnSpan(2),
 
                         Forms\Components\Select::make('department_id')
-                            ->options(function (Forms\Get $get) {
+                            ->label('Department')
+                            ->options(function (Forms\Get $get): array {
                                 $companyId = $get('company_id');
-                                if (!$companyId) return [];
                                 
-                                return \App\Models\Department::where('company_id', $companyId)
-                                    ->pluck('name', 'id');
+                                if (!$companyId) {
+                                    return [];
+                                }
+                                
+                                return Department::where('company_id', $companyId)
+                                    ->orderBy('name')
+                                    ->pluck('name', 'id')
+                                    ->toArray();
                             })
                             ->searchable()
-                            ->preload()
+                            ->live()
+                            ->required()
+                            ->disabled(fn (Forms\Get $get): bool => !$get('company_id'))
+                            ->helperText('Select a company first to see available departments')
                             ->createOptionForm([
                                 Forms\Components\TextInput::make('name')
                                     ->required()
@@ -98,49 +125,52 @@ class UserResource extends Resource
                                 Forms\Components\Select::make('company_id')
                                     ->relationship('company', 'name')
                                     ->required(),
-                            ]),
+                            ])
+                            ->columnSpan(2),
 
                         Forms\Components\Select::make('roles')
+                            ->label('User Roles')
                             ->multiple()
-                            ->preload()
                             ->searchable()
-                            ->options(fn () => Role::pluck('name', 'id'))
-                            ->getOptionLabelFromRecordUsing(fn ($record) => ucfirst(str_replace('_', ' ', $record->name)))
+                            ->options(fn (): array => Role::pluck('name', 'name')->toArray())
                             ->helperText('Select one or more roles for this user')
-                            ->saveRelationshipsUsing(function ($component, $state, $record) {
-                                // Clear existing roles first
-                                $record->roles()->detach();
-                                
-                                // Assign new roles by ID
-                                if (!empty($state)) {
-                                    $record->roles()->attach($state);
-                                }
-                            })
-                            ->loadStateFromRelationshipsUsing(function ($component, $record) {
-                                return $record->roles->pluck('id')->toArray();
-                            }),
-                    ])->columns(3),
+                            ->columnSpanFull(),
+                    ])->columns(4),
 
                 Section::make('Security')
+                    ->description('Password and verification settings')
                     ->schema([
                         Forms\Components\TextInput::make('password')
                             ->password()
-                            ->dehydrateStateUsing(fn ($state) => filled($state) ? Hash::make($state) : null)
+                            ->dehydrateStateUsing(fn ($state) => Hash::make($state))
                             ->dehydrated(fn ($state) => filled($state))
                             ->required(fn (string $context): bool => $context === 'create')
-                            ->maxLength(255)
+                            ->minLength(8)
+                            ->helperText('Leave blank to keep current password (for edit)')
                             ->revealable()
-                            ->helperText('Leave blank to keep current password'),
+                            ->columnSpan(2),
 
-                        Forms\Components\Toggle::make('email_verified')
+                        Forms\Components\Toggle::make('email_verified_at')
                             ->label('Email Verified')
-                            ->default(true)
-                            ->afterStateHydrated(function (Forms\Components\Toggle $component, $state, $record) {
-                                $component->state($record?->email_verified_at !== null);
-                            })
-                            ->dehydrated(false)
-                            ->helperText('Whether the user has verified their email address'),
-                    ])->columns(2),
+                            ->helperText('Whether the user has verified their email address')
+                            ->dehydrateStateUsing(fn ($state) => $state ? now() : null)
+                            ->formatStateUsing(fn ($state) => !is_null($state))
+                            ->columnSpan(2),
+                    ])->columns(4),
+
+                Section::make('Additional Information')
+                    ->description('Optional user details and settings')
+                    ->schema([
+                        Forms\Components\FileUpload::make('signature_path')
+                            ->label('Digital Signature')
+                            ->image()
+                            ->directory('signatures')
+                            ->maxSize(2048)
+                            ->helperText('Upload digital signature image (max 2MB)')
+                            ->columnSpanFull(),
+                    ])
+                    ->collapsible()
+                    ->collapsed(),
             ]);
     }
 
@@ -152,41 +182,41 @@ class UserResource extends Resource
                     ->label('Employee ID')
                     ->searchable()
                     ->sortable()
-                    ->copyable(),
+                    ->copyable()
+                    ->badge()
+                    ->color('primary'),
 
                 Tables\Columns\TextColumn::make('name')
+                    ->label('Name')
                     ->searchable()
-                    ->sortable(),
+                    ->sortable()
+                    ->description(fn (User $record): string => $record->email),
 
-                Tables\Columns\TextColumn::make('email')
-                    ->searchable()
-                    ->copyable(),
-
-                Tables\Columns\TextColumn::make('company.code')
+                Tables\Columns\TextColumn::make('company.name')
                     ->label('Company')
                     ->badge()
-                    ->color('primary')
+                    ->color('info')
                     ->searchable()
                     ->sortable(),
 
                 Tables\Columns\TextColumn::make('department.name')
-                    ->sortable()
-                    ->searchable(),
+                    ->label('Department')
+                    ->badge()
+                    ->color('secondary')
+                    ->searchable()
+                    ->sortable(),
 
                 Tables\Columns\TextColumn::make('position')
+                    ->label('Position')
                     ->searchable()
-                    ->placeholder('Not specified'),
+                    ->toggleable(),
 
                 Tables\Columns\TextColumn::make('roles.name')
+                    ->label('Roles')
                     ->badge()
+                    ->color('success')
                     ->separator(',')
-                    ->colors([
-                        'danger' => 'admin',
-                        'success' => 'pjo',
-                        'warning' => fn ($state) => in_array($state, ['section_head', 'scm_head']),
-                        'primary' => 'user',
-                    ])
-                    ->formatStateUsing(fn (string $state): string => ucfirst(str_replace('_', ' ', $state))),
+                    ->searchable(),
 
                 Tables\Columns\IconColumn::make('email_verified_at')
                     ->label('Verified')
@@ -196,23 +226,21 @@ class UserResource extends Resource
                     ->trueColor('success')
                     ->falseColor('danger'),
 
-                Tables\Columns\TextColumn::make('requests_count')
-                    ->counts('requests')
-                    ->label('Requests')
-                    ->sortable(),
-
                 Tables\Columns\TextColumn::make('created_at')
-                    ->dateTime('d/m/Y')
+                    ->label('Created')
+                    ->dateTime('d/m/Y H:i')
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                Tables\Filters\SelectFilter::make('company')
+                Tables\Filters\SelectFilter::make('company_id')
+                    ->label('Company')
                     ->relationship('company', 'name')
                     ->searchable()
                     ->preload(),
 
-                Tables\Filters\SelectFilter::make('department')
+                Tables\Filters\SelectFilter::make('department_id')
+                    ->label('Department')
                     ->relationship('department', 'name')
                     ->searchable()
                     ->preload(),
@@ -230,70 +258,137 @@ class UserResource extends Resource
                     ->falseLabel('Unverified users'),
             ])
             ->actions([
-                Tables\Actions\ViewAction::make(),
-                Tables\Actions\EditAction::make(),
+                Tables\Actions\ViewAction::make()
+                    ->color('info'),
+
+                Tables\Actions\EditAction::make()
+                    ->color('warning'),
 
                 Action::make('resetPassword')
+                    ->label('Reset Password')
                     ->icon('heroicon-o-key')
-                    ->color('warning')
+                    ->color('danger')
                     ->requiresConfirmation()
                     ->modalHeading('Reset Password')
-                    ->modalDescription('Generate a new password for this user')
+                    ->modalDescription('Generate a new password for this user. The user will be notified via email.')
                     ->form([
                         Forms\Components\TextInput::make('new_password')
                             ->label('New Password')
                             ->password()
                             ->required()
                             ->minLength(8)
-                            ->revealable()
-                            ->default(fn () => \Illuminate\Support\Str::random(12)),
+                            ->revealable(),
                     ])
-                    ->action(function (User $record, array $data) {
+                    ->action(function (User $record, array $data): void {
                         $record->update([
                             'password' => Hash::make($data['new_password'])
                         ]);
-
+                        
                         Notification::make()
-                            ->title('Password reset successfully')
+                            ->title('Password Reset')
+                            ->body("Password updated for {$record->name}")
                             ->success()
-                            ->body("New password: {$data['new_password']}")
+                            ->send();
+                    }),
+
+                Action::make('assignRole')
+                    ->label('Assign Role')
+                    ->icon('heroicon-o-user-plus')
+                    ->color('success')
+                    ->form([
+                        Forms\Components\Select::make('role')
+                            ->label('Role')
+                            ->options(Role::pluck('name', 'name'))
+                            ->required()
+                            ->searchable(),
+                    ])
+                    ->action(function (User $record, array $data): void {
+                        $record->assignRole($data['role']);
+                        
+                        Notification::make()
+                            ->title('Role Assigned')
+                            ->body("Role {$data['role']} assigned to {$record->name}")
+                            ->success()
                             ->send();
                     }),
 
                 Tables\Actions\DeleteAction::make()
-                    ->visible(fn (User $record) => $record->id !== auth()->id()),
+                    ->visible(fn (User $record): bool => 
+                        $record->requests()->count() === 0 && 
+                        $record->approvals()->count() === 0
+                    )
+                    ->requiresConfirmation()
+                    ->modalDescription('This action will permanently delete the user and cannot be undone.'),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
-                    Tables\Actions\DeleteBulkAction::make(),
-                    
+                    Tables\Actions\DeleteBulkAction::make()
+                        ->visible(fn (): bool => auth()->user()->can('manage_system'))
+                        ->requiresConfirmation(),
+
                     Tables\Actions\BulkAction::make('assignRole')
-                        ->label('Assign Role')
-                        ->icon('heroicon-o-user-group')
+                        ->label('Assign Role to Selected')
+                        ->icon('heroicon-o-user-plus')
                         ->form([
-                            Forms\Components\Select::make('role_id')
+                            Forms\Components\Select::make('role')
                                 ->label('Role')
-                                ->options(Role::pluck('name', 'id'))
+                                ->options(Role::pluck('name', 'name'))
                                 ->required()
-                                ->searchable()
-                                ->getOptionLabelUsing(fn ($value) => ucfirst(str_replace('_', ' ', Role::find($value)?->name ?? ''))),
+                                ->searchable(),
                         ])
                         ->action(function (array $data, $records) {
-                            $role = Role::find($data['role_id']);
-                            
-                            if ($role) {
-                                foreach ($records as $record) {
-                                    $record->assignRole($role->name);
-                                }
-                                
-                                Notification::make()
-                                    ->title('Role assigned to selected users')
-                                    ->success()
-                                    ->send();
+                            foreach ($records as $record) {
+                                $record->assignRole($data['role']);
                             }
+                            
+                            Notification::make()
+                                ->title('Roles Assigned')
+                                ->body("Role {$data['role']} assigned to selected users")
+                                ->success()
+                                ->send();
+                        }),
+
+                    Tables\Actions\BulkAction::make('moveToCompany')
+                        ->label('Move to Company')
+                        ->icon('heroicon-o-building-office')
+                        ->form([
+                            Forms\Components\Select::make('company_id')
+                                ->label('Target Company')
+                                ->options(Company::active()->pluck('name', 'id'))
+                                ->required()
+                                ->searchable(),
+                        ])
+                        ->action(function (array $data, $records) {
+                            foreach ($records as $record) {
+                                $record->update([
+                                    'company_id' => $data['company_id'],
+                                    'department_id' => null, // Reset department
+                                ]);
+                            }
+                            
+                            Notification::make()
+                                ->title('Users Moved')
+                                ->body('Selected users moved to new company')
+                                ->success()
+                                ->send();
                         }),
                 ]),
+            ])
+            ->defaultSort('name', 'asc')
+            ->groups([
+                Tables\Grouping\Group::make('company.name')
+                    ->label('Company')
+                    ->collapsible(),
+                Tables\Grouping\Group::make('department.name')
+                    ->label('Department')
+                    ->collapsible(),
             ]);
+    }
+
+    public static function getEloquentQuery(): Builder
+    {
+        return parent::getEloquentQuery()
+            ->with(['company', 'department', 'roles']);
     }
 
     public static function getPages(): array
@@ -306,22 +401,22 @@ class UserResource extends Resource
         ];
     }
 
-    public static function getGlobalSearchEloquentQuery(): Builder
-    {
-        return parent::getGlobalSearchEloquentQuery()->with(['department']);
-    }
-
     public static function getGloballySearchableAttributes(): array
     {
-        return ['name', 'email', 'employee_id', 'department.name'];
+        return ['name', 'email', 'employee_id', 'company.name', 'department.name'];
     }
 
     public static function getGlobalSearchResultDetails(Model $record): array
     {
         return [
-            'Department' => $record->department?->name,
-            'Position' => $record->position,
             'Employee ID' => $record->employee_id,
+            'Company' => $record->company?->name,
+            'Department' => $record->department?->name,
         ];
+    }
+
+    public static function getGlobalSearchResultUrl(Model $record): string
+    {
+        return UserResource::getUrl('view', ['record' => $record]);
     }
 }
