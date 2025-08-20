@@ -1,4 +1,5 @@
 <?php
+// app/Filament/Widgets/RequestStatsWidget.php
 
 namespace App\Filament\Widgets;
 
@@ -8,53 +9,72 @@ use App\Models\Request;
 
 class RequestStatsWidget extends BaseWidget
 {
+    protected static ?int $sort = 1;
+    protected static ?string $pollingInterval = '15s';
+
     protected function getStats(): array
     {
         $user = auth()->user();
         $stats = [];
 
-        // My Requests Stats
+        // Personal Stats (Always shown)
         if ($user->can('manage_own_requests')) {
             $myRequests = $user->requests();
             
             $stats[] = Stat::make('My Requests', $myRequests->count())
                 ->description('Total requests created')
                 ->descriptionIcon('heroicon-m-document-text')
-                ->color('primary');
+                ->color('primary')
+                ->url('/admin/requests?tableFilters[user][value]=' . $user->id);
 
-            $stats[] = Stat::make('Draft Requests', $myRequests->where('status', 'draft')->count())
-                ->description('Pending submission')
+            $draftCount = $myRequests->where('status', 'draft')->count();
+            $stats[] = Stat::make('Draft Requests', $draftCount)
+                ->description($draftCount > 0 ? 'Need submission' : 'All submitted')
                 ->descriptionIcon('heroicon-m-pencil')
-                ->color('warning');
+                ->color($draftCount > 0 ? 'warning' : 'success')
+                ->url('/admin/requests?tableFilters[status][value]=draft');
 
-            $stats[] = Stat::make('Completed', 
-                $myRequests->where('status', 'completed')->count()
-            )
+            $completedCount = $myRequests->where('status', 'completed')->count();
+            $stats[] = Stat::make('Completed', $completedCount)
                 ->description('Approved requests')
                 ->descriptionIcon('heroicon-m-check-circle')
-                ->color('success');
+                ->color('success')
+                ->url('/admin/requests?tableFilters[status][value]=completed');
         }
 
-        // Admin/PJO Stats
+        // Admin/Management Stats (Additional for privileged users)
         if ($user->can('view_all_requests')) {
-            $stats[] = Stat::make('Total Requests', Request::count())
-                ->description('All time requests')
+            $stats[] = Stat::make('Total System Requests', Request::count())
+                ->description('All companies combined')
                 ->descriptionIcon('heroicon-m-chart-bar')
-                ->color('info');
+                ->color('info')
+                ->url('/admin/requests');
 
-            $stats[] = Stat::make('Pending Approval', 
-                Request::whereIn('status', ['submitted', 'section_approved', 'scm_approved'])->count()
-            )
-                ->description('Awaiting approval')
+            $pendingCount = Request::whereIn('status', ['submitted', 'section_approved', 'scm_approved'])->count();
+            $stats[] = Stat::make('Pending Approval', $pendingCount)
+                ->description($pendingCount > 0 ? 'Require attention' : 'All processed')
                 ->descriptionIcon('heroicon-m-clock')
-                ->color('warning');
+                ->color($pendingCount > 0 ? 'danger' : 'success')
+                ->url('/admin/approvals?tableFilters[status][value]=pending');
 
-            $stats[] = Stat::make('This Month', 
-                Request::whereMonth('created_at', now()->month)->count()
-            )
-                ->description('New requests this month')
+            $thisMonthCount = Request::whereMonth('created_at', now()->month)
+                ->whereYear('created_at', now()->year)
+                ->count();
+            $stats[] = Stat::make('This Month', $thisMonthCount)
+                ->description('New requests in ' . now()->format('F Y'))
                 ->descriptionIcon('heroicon-m-calendar')
                 ->color('primary');
+        }
+
+        // Company-specific stats for managers
+        if (!$user->can('view_all_requests') && $user->hasAnyRole(['section_head', 'pjo'])) {
+            $companyRequests = Request::where('company_id', $user->company_id);
+            
+            $stats[] = Stat::make('Company Requests', $companyRequests->count())
+                ->description($user->company->name ?? 'Company total')
+                ->descriptionIcon('heroicon-m-building-office')
+                ->color('info')
+                ->url('/admin/requests');
         }
 
         return $stats;

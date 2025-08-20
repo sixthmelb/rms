@@ -1,5 +1,5 @@
 <?php
-// app/Providers/Filament/AdminPanelProvider.php - ULTRA SIMPLE, NO ERRORS
+// app/Providers/Filament/AdminPanelProvider.php
 
 namespace App\Providers\Filament;
 
@@ -19,6 +19,11 @@ use Illuminate\Session\Middleware\AuthenticateSession;
 use Illuminate\Session\Middleware\StartSession;
 use Illuminate\View\Middleware\ShareErrorsFromSession;
 
+// Import custom widgets
+use App\Filament\Widgets\RequestStatsWidget;
+use App\Filament\Widgets\ApprovalStatsWidget;
+use App\Filament\Widgets\RecentRequestsWidget;
+
 class AdminPanelProvider extends PanelProvider
 {
     public function panel(Panel $panel): Panel
@@ -37,7 +42,13 @@ class AdminPanelProvider extends PanelProvider
                 Pages\Dashboard::class,
             ])
             ->widgets([
+                // Default Filament widgets
                 Widgets\AccountWidget::class,
+                
+                // Custom widgets - REGISTERED MANUALLY
+                RequestStatsWidget::class,
+                ApprovalStatsWidget::class,
+                RecentRequestsWidget::class,
             ])
             ->middleware([
                 EncryptCookies::class,
@@ -54,6 +65,5 @@ class AdminPanelProvider extends PanelProvider
                 Authenticate::class,
             ])
             ->brandName('Request Management System');
-            // NO CUSTOM NAVIGATION ITEMS - Use default auto-discovery
     }
 }
