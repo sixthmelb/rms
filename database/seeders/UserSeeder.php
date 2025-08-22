@@ -12,128 +12,119 @@ class UserSeeder extends Seeder
 {
     public function run(): void
     {
-        // Get companies
-        $jktCompany = Company::where('code', 'AKM-JKT')->first();
-        $sbyCompany = Company::where('code', 'AKM-SBY')->first();
-        $bdgCompany = Company::where('code', 'AKM-BDG')->first();
-        $scmCompany = Company::where('code', 'SCM-CTR')->first();
+        // Get AKM company and IT department
+        $akmCompany = Company::where('code', 'AKM')->first();
+        $itDepartment = Department::where('code', 'IT')->where('company_id', $akmCompany->id)->first();
 
-        // Create Super Admin (can access all companies)
+        // System Administrator
         $admin = User::firstOrCreate([
             'email' => 'admin@akm.com'
         ], [
             'name' => 'System Administrator',
             'employee_id' => 'ADM001',
-            'password' => Hash::make('password'),
-            'company_id' => $jktCompany->id, // Default company
-            'department_id' => $jktCompany->departments()->where('code', 'IT')->first()->id,
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
             'position' => 'System Administrator'
         ]);
         $admin->assignRole('admin');
 
-        // Create Central SCM Head
-        $scmDept = $scmCompany->departments()->where('code', 'SCM')->first();
+        // Approvers
+        $rony = User::firstOrCreate([
+            'email' => 'rony.andreas@akm.com'
+        ], [
+            'name' => 'Rony Andreas S.',
+            'employee_id' => 'AKM001',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'Section Head HCDGA/IT'
+        ]);
+        $rony->assignRole('section_head');
+
         $mandala = User::firstOrCreate([
             'email' => 'mandala@akm.com'
         ], [
-            'name' => 'Mandala SCM',
+            'name' => 'Mandala',
             'employee_id' => 'SCM001',
-            'password' => Hash::make('password'),
-            'company_id' => $scmCompany->id,
-            'department_id' => $scmDept->id,
-            'position' => 'Central SCM Head'
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'Section Head SCM'
         ]);
         $mandala->assignRole('scm_head');
 
-        // =============== JAKARTA COMPANY ===============
-        $this->createCompanyUsers($jktCompany, 'JKT');
-
-        // =============== SURABAYA COMPANY ===============  
-        $this->createCompanyUsers($sbyCompany, 'SBY');
-
-        // =============== BANDUNG COMPANY ===============
-        $this->createCompanyUsers($bdgCompany, 'BDG');
-    }
-
-    private function createCompanyUsers(Company $company, string $cityCode): void
-    {
-        $engineering = $company->departments()->where('code', 'ENG')->first();
-        $operations = $company->departments()->where('code', 'OPS')->first();
-        $hr = $company->departments()->where('code', 'HR')->first();
-
-        // Create PJO for this company
-        $pjo = User::firstOrCreate([
-            'email' => "pjo.{$cityCode}@akm.com"
+        $renandus = User::firstOrCreate([
+            'email' => 'renandus@akm.com'
         ], [
-            'name' => "PJO {$company->name}",
-            'employee_id' => "PJO{$cityCode}001",
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $engineering->id,
-            'position' => 'Project Officer'
+            'name' => 'Renandus',
+            'employee_id' => 'PJO001',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'PJO AKM'
         ]);
-        $pjo->assignRole('pjo');
+        $renandus->assignRole('pjo');
 
-        // Create Section Heads for each department
-        $sectionHeadEng = User::firstOrCreate([
-            'email' => "eng.head.{$cityCode}@akm.com"
+        // Regular Users
+        $maxWilliam = User::firstOrCreate([
+            'email' => 'max.william@akm.com'
         ], [
-            'name' => "Engineering Head {$cityCode}",
-            'employee_id' => "SH{$cityCode}ENG001",
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $engineering->id,
-            'position' => 'Engineering Section Head'
+            'name' => 'Max William',
+            'employee_id' => 'IT001',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'IT Staff'
         ]);
-        $sectionHeadEng->assignRole('section_head');
+        $maxWilliam->assignRole('user');
 
-        $sectionHeadOps = User::firstOrCreate([
-            'email' => "ops.head.{$cityCode}@akm.com"
+        $edowardo = User::firstOrCreate([
+            'email' => 'edowardo.romon@akm.com'
         ], [
-            'name' => "Operations Head {$cityCode}",
-            'employee_id' => "SH{$cityCode}OPS001", 
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $operations->id,
-            'position' => 'Operations Section Head'
+            'name' => 'Edowardo Romon',
+            'employee_id' => 'IT002',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'IT Crew'
         ]);
-        $sectionHeadOps->assignRole('section_head');
+        $edowardo->assignRole('user');
 
-        // Create regular users
-        $user1 = User::firstOrCreate([
-            'email' => "engineer.{$cityCode}@akm.com"
+        $adeYogi = User::firstOrCreate([
+            'email' => 'ade.yogi@akm.com'
         ], [
-            'name' => "Engineer {$cityCode}",
-            'employee_id' => "ENG{$cityCode}001",
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $engineering->id,
-            'position' => 'Engineer'
+            'name' => 'Ade Yogi Finanda',
+            'employee_id' => 'IT003',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'IT Crew'
         ]);
-        $user1->assignRole('user');
+        $adeYogi->assignRole('user');
 
-        $user2 = User::firstOrCreate([
-            'email' => "operator.{$cityCode}@akm.com"
+        $adePutera = User::firstOrCreate([
+            'email' => 'ade.putera@akm.com'
         ], [
-            'name' => "Operator {$cityCode}",
-            'employee_id' => "OPS{$cityCode}001",
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $operations->id,
-            'position' => 'Operator'
+            'name' => 'Ade Putera Ramadhan',
+            'employee_id' => 'IT004',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'IT Crew'
         ]);
-        $user2->assignRole('user');
+        $adePutera->assignRole('user');
 
-        $user3 = User::firstOrCreate([
-            'email' => "hr.staff.{$cityCode}@akm.com"
+        $yogiAnanda = User::firstOrCreate([
+            'email' => 'yogi.ananda@akm.com'
         ], [
-            'name' => "HR Staff {$cityCode}",
-            'employee_id' => "HR{$cityCode}001",
-            'password' => Hash::make('password'),
-            'company_id' => $company->id,
-            'department_id' => $hr->id,
-            'position' => 'HR Staff'
+            'name' => 'Yogi Ananda',
+            'employee_id' => 'IT005',
+            'password' => Hash::make('@d1jaya?'),
+            'company_id' => $akmCompany->id,
+            'department_id' => $itDepartment->id,
+            'position' => 'IT Staff'
         ]);
-        $user3->assignRole('user');
+        $yogiAnanda->assignRole('user');
     }
 }

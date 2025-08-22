@@ -21,12 +21,15 @@ class Request extends Model
         'department_id',
         'status',
         'notes',
-        'signature_data'
+        'signature_data',
+        'cancellation_reason',
+        'cancelled_at'
     ];
 
     protected $casts = [
         'request_date' => 'date',
-        'signature_data' => 'array'
+        'signature_data' => 'array',
+        'cancelled_at' => 'datetime'
     ];
 
     protected static function boot()
@@ -96,7 +99,6 @@ class Request extends Model
             $q->where('role', $role)->where('status', 'pending');
             
             if ($companyId && $role !== 'scm_head') {
-                // SCM is centralized, others are company-specific
                 $q->whereHas('request', function ($requestQ) use ($companyId) {
                     $requestQ->where('company_id', $companyId);
                 });
@@ -118,10 +120,11 @@ class Request extends Model
         })->where('company_id', $user->company_id);
     }
 
-    // ✅ MAIN METHODS
+    // ✅ FIXED: PERMISSION CHECKS
     public function canBeEditedBy(User $user): bool
     {
-        return $this->status === 'draft' 
+        // ✅ FIXED: Allow edit for both draft AND revision_requested status
+        return in_array($this->status, ['draft', 'revision_requested'])
             && $this->user_id === $user->id
             && $this->company_id === $user->company_id;
     }
@@ -161,6 +164,97 @@ class Request extends Model
         return false;
     }
 
+    // ✅ CANCELLATION & REVISION METHODS
+    public function canBeCancelledBy(User $user): bool
+    {
+        // Only requester can cancel
+        if ($this->user_id !== $user->id) {
+            return false;
+        }
+
+        // Can only cancel if not completed/rejected/cancelled
+        return in_array($this->status, [
+            'draft', 'submitted', 'section_approved', 'scm_approved'
+        ]);
+    }
+
+    public function canRequestRevisionBy(User $user): bool
+    {
+        // Only approvers can request revision
+        $hasApprovalRole = $this->approvals()
+            ->where('user_id', $user->id)
+            ->where('status', 'pending')
+            ->exists();
+
+        if (!$hasApprovalRole) {
+            return false;
+        }
+
+        // Can request revision if request is in active approval process
+        return in_array($this->status, [
+            'submitted', 'section_approved', 'scm_approved'
+        ]);
+    }
+
+    public function cancelRequest(string $reason): bool
+    {
+        $this->update([
+            'status' => 'cancelled',
+            'cancellation_reason' => $reason,
+            'cancelled_at' => now()
+        ]);
+
+        // Cancel all pending approvals
+        $this->approvals()
+            ->where('status', 'pending')
+            ->update(['status' => 'cancelled']);
+
+        return true;
+    }
+
+    public function requestRevision(User $approver, string $reason): bool
+    {
+        // Create revision record in approval
+        $approval = $this->approvals()
+            ->where('user_id', $approver->id)
+            ->where('status', 'pending')
+            ->first();
+
+        if (!$approval) {
+            return false;
+        }
+
+        $approval->update([
+            'status' => 'revision_requested',
+            'comments' => $reason
+        ]);
+
+        // Update request status to revision_requested
+        $this->update([
+            'status' => 'revision_requested',
+            'notes' => $this->notes ? 
+                $this->notes . "\n\nRevision Requested: " . $reason : 
+                "Revision Requested: " . $reason
+        ]);
+
+        return true;
+    }
+
+    public function resubmitAfterRevision(): bool
+    {
+        if ($this->status !== 'revision_requested') {
+            return false;
+        }
+
+        // Reset to submitted status
+        $this->update(['status' => 'submitted']);
+
+        // Reset all approvals to pending (restart workflow)
+        $this->approvals()->update(['status' => 'pending']);
+
+        return true;
+    }
+
     // ✅ REQUEST NUMBER GENERATION
     public static function generateRequestNumber($companyId = null, $departmentId = null): string
     {
@@ -171,117 +265,29 @@ class Request extends Model
             
             // Get department code
             $department = Department::find($departmentId);
-            $departmentCode = $department ? $department->code : 'DEF';
+            $departmentCode = $department ? $department->code : 'GEN';
             
-            $date = now()->format('Ymd');
+            // Get current year and month
+            $year = date('Y');
+            $month = date('m');
             
-            // Get last request for same company + department + date
-            $lastRequest = static::whereDate('created_at', now())
-                ->when($companyId, fn($q) => $q->where('company_id', $companyId))
-                ->when($departmentId, fn($q) => $q->where('department_id', $departmentId))
-                ->lockForUpdate()
-                ->orderBy('id', 'desc')
+            // Create base format: COMPANY-DEPT-YYYYMM
+            $baseNumber = "{$companyCode}-{$departmentCode}-{$year}{$month}";
+            
+            // Get last sequence number for this month
+            $lastRequest = static::where('request_number', 'LIKE', $baseNumber . '%')
+                ->orderByRaw('CAST(RIGHT(request_number, 4) AS UNSIGNED) DESC')
                 ->first();
-                
-            // Extract sequence from last request number or start from 1
+            
             $sequence = 1;
-            if ($lastRequest && !empty($lastRequest->request_number)) {
+            if ($lastRequest) {
                 $lastSequence = (int) substr($lastRequest->request_number, -4);
                 $sequence = $lastSequence + 1;
             }
-                
-            // Format: REQ-{companyCode}-{departmentCode}-{date}-{sequence}
-            return "REQ-{$companyCode}-{$departmentCode}-{$date}-" . str_pad($sequence, 4, '0', STR_PAD_LEFT);
+            
+            // Generate final request number: COMPANY-DEPT-YYYYMM-NNNN
+            return $baseNumber . '-' . str_pad($sequence, 4, '0', STR_PAD_LEFT);
         });
-    }
-
-    public function regenerateRequestNumber(): string
-    {
-        $newNumber = static::generateRequestNumber($this->company_id, $this->department_id);
-        $this->update(['request_number' => $newNumber]);
-        return $newNumber;
-    }
-
-    // ✅ STATUS MANAGEMENT
-    public function submit(): bool
-    {
-        if ($this->status !== 'draft') {
-            return false;
-        }
-
-        $this->update(['status' => 'submitted']);
-        $this->createApprovalRecords();
-        
-        return true;
-    }
-
-    public function reject(string $reason = null): bool
-    {
-        $this->update([
-            'status' => 'rejected',
-            'notes' => $reason ? $this->notes . "\n\nRejection: " . $reason : $this->notes
-        ]);
-
-        return true;
-    }
-
-    public function getNextApprovalRole(): ?string
-    {
-        return match ($this->status) {
-            'submitted' => 'section_head',
-            'section_approved' => 'scm_head',
-            'scm_approved' => 'pjo',
-            default => null
-        };
-    }
-
-    public function getPendingApprovals()
-    {
-        $nextRole = $this->getNextApprovalRole();
-        
-        if (!$nextRole) {
-            return collect();
-        }
-
-        return $this->approvals()
-            ->where('role', $nextRole)
-            ->where('status', 'pending')
-            ->with('user')
-            ->get();
-    }
-
-    // ✅ APPROVAL RECORDS CREATION
-    private function createApprovalRecords(): void
-    {
-        $approvalRoles = [
-            ['role' => 'section_head', 'company_specific' => true, 'department_specific' => true],
-            ['role' => 'scm_head', 'company_specific' => false, 'department_specific' => false],
-            ['role' => 'pjo', 'company_specific' => true, 'department_specific' => false],
-        ];
-
-        foreach ($approvalRoles as $approval) {
-            $query = User::role($approval['role']);
-            
-            if ($approval['company_specific']) {
-                $query->where('company_id', $this->company_id);
-            }
-            
-            if ($approval['department_specific']) {
-                $query->where('department_id', $this->department_id);
-            }
-            
-            $approvers = $query->get();
-            
-            foreach ($approvers as $approver) {
-                Approval::firstOrCreate([
-                    'request_id' => $this->id,
-                    'user_id' => $approver->id,
-                    'role' => $approval['role'],
-                ], [
-                    'status' => 'pending',
-                ]);
-            }
-        }
     }
 
     // ✅ HELPER METHODS & ATTRIBUTES
@@ -294,7 +300,8 @@ class Request extends Model
             'scm_approved' => 'primary',
             'completed' => 'success',
             'rejected' => 'danger',
-            default => 'secondary'
+            'cancelled' => 'gray',
+            'revision_requested' => 'orange'
         };
     }
 
@@ -307,6 +314,8 @@ class Request extends Model
             'scm_approved' => 'SCM Approved',
             'completed' => 'Completed',
             'rejected' => 'Rejected',
+            'cancelled' => 'Cancelled',
+            'revision_requested' => 'Revision Requested',
             default => 'Unknown'
         };
     }
@@ -365,25 +374,15 @@ class Request extends Model
             'scm_approved' => $query->clone()->where('status', 'scm_approved')->count(),
             'completed' => $query->clone()->where('status', 'completed')->count(),
             'rejected' => $query->clone()->where('status', 'rejected')->count(),
-            'pending_approval' => $query->clone()->whereIn('status', [
-                'submitted', 'section_approved', 'scm_approved'
-            ])->count(),
+            'cancelled' => $query->clone()->where('status', 'cancelled')->count(),
+            'revision_requested' => $query->clone()->where('status', 'revision_requested')->count(),
         ];
-    }
-
-    public static function getRecentRequests($limit = 10, $companyId = null)
-    {
-        return static::with(['user', 'company', 'department'])
-            ->when($companyId, fn($q) => $q->where('company_id', $companyId))
-            ->latest()
-            ->limit($limit)
-            ->get();
     }
 
     // ✅ VALIDATION HELPERS
     public function isEditable(): bool
     {
-        return in_array($this->status, ['draft']);
+        return in_array($this->status, ['draft', 'revision_requested']);
     }
 
     public function isDeletable(): bool
@@ -406,36 +405,13 @@ class Request extends Model
         return $this->status === 'rejected';
     }
 
-    // ✅ SEARCH & FILTERING
-    public function scopeSearch($query, string $search)
+    public function isCancelled(): bool
     {
-        return $query->where(function ($q) use ($search) {
-            $q->where('request_number', 'like', "%{$search}%")
-              ->orWhere('notes', 'like', "%{$search}%")
-              ->orWhereHas('user', function ($userQ) use ($search) {
-                  $userQ->where('name', 'like', "%{$search}%")
-                       ->orWhere('employee_id', 'like', "%{$search}%");
-              })
-              ->orWhereHas('items', function ($itemQ) use ($search) {
-                  $itemQ->where('description', 'like', "%{$search}%")
-                       ->orWhere('specification', 'like', "%{$search}%");
-              });
-        });
+        return $this->status === 'cancelled';
     }
 
-    public function scopeDateRange($query, $startDate, $endDate)
+    public function isRevisionRequested(): bool
     {
-        return $query->whereBetween('request_date', [$startDate, $endDate]);
-    }
-
-    public function scopeThisMonth($query)
-    {
-        return $query->whereMonth('created_at', now()->month)
-                    ->whereYear('created_at', now()->year);
-    }
-
-    public function scopeToday($query)
-    {
-        return $query->whereDate('created_at', now()->toDateString());
+        return $this->status === 'revision_requested';
     }
 }

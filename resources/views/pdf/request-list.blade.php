@@ -56,6 +56,7 @@
         
         .company-subtitle {
             font-size: 8px;
+            padding-left: 4px;
             color: #666;
         }
         
@@ -125,7 +126,7 @@
             background-color: #ffeb3b;
             font-weight: bold;
             font-size: 12px;
-            height: 20%;
+            height: 10%;
         }
         
         .signature-content {
@@ -144,8 +145,8 @@
         }
         
         .qr-code {
-            width: 75px;
-            height: 75px;
+            width: 70px;
+            height: 70px;
             margin: 2px auto;
         }
         
@@ -182,8 +183,9 @@
     {{-- Header Section --}}
     <div class="header">
         <div class="company-info">
-            <div class="company-name">PT. ADIJAYA KARYA MAKMUR</div>
-            <div class="company-subtitle">Excellence in Construction & Engineering</div>
+            <div class="company-logo">
+                <img src="{{ public_path('images/logo.png') }}" alt="{{ $request->company->name }}" style="height: 35px; width: auto;">
+            </div>
         </div>
     </div>
 
@@ -191,8 +193,9 @@
     <div class="document-title">REQUEST LIST</div>
 
     {{-- Document Info --}}
-    <div class="document-info">
+    <div class="document-info">        
         <div><strong>Request No:</strong> {{ $request->request_number }}</div>
+        <div><strong>Department:</strong> {{ $request->department->name }}#( {{$request->department->code}} )</div>
         <div><strong>DATE:</strong> {{ $request->request_date->format('d/m/Y') }}</div>
     </div>
 

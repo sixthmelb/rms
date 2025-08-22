@@ -17,6 +17,8 @@ class RequestItemResource extends Resource
 {
     protected static ?string $model = RequestItem::class;
 
+    protected static bool $shouldRegisterNavigation = false;
+
     protected static ?string $navigationIcon = 'heroicon-o-archive-box';
 
     public static function form(Form $form): Form

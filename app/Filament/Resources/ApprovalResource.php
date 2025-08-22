@@ -31,67 +31,17 @@ class ApprovalResource extends Resource
                auth()->user()->can('view_all_requests');
     }
 
-    public static function form(Form $form): Form
-    {
-        return $form
-            ->schema([
-                Section::make('Approval Details')
-                    ->schema([
-                        Forms\Components\Select::make('request_id')
-                            ->relationship('request', 'request_number')
-                            ->searchable()
-                            ->preload()
-                            ->required()
-                            ->disabled(fn ($context) => $context === 'edit'),
-
-                        Forms\Components\Select::make('user_id')
-                            ->relationship('user', 'name')
-                            ->searchable()
-                            ->preload()
-                            ->required()
-                            ->disabled(fn ($context) => $context === 'edit'),
-
-                        Forms\Components\Select::make('role')
-                            ->options([
-                                'section_head' => 'Section Head',
-                                'scm_head' => 'SCM Head',
-                                'pjo' => 'PJO',
-                            ])
-                            ->required()
-                            ->disabled(fn ($context) => $context === 'edit'),
-
-                        Forms\Components\Select::make('status')
-                            ->options([
-                                'pending' => 'Pending',
-                                'approved' => 'Approved',
-                                'rejected' => 'Rejected',
-                            ])
-                            ->required()
-                            ->default('pending'),
-
-                        Forms\Components\Textarea::make('comments')
-                            ->rows(3)
-                            ->columnSpanFull(),
-                    ])->columns(2),
-
-                Section::make('Approval Information')
-                    ->schema([
-                        Forms\Components\DateTimePicker::make('approved_at')
-                            ->displayFormat('d/m/Y H:i')
-                            ->disabled(),
-
-                        Forms\Components\TextInput::make('qr_code_data')
-                            ->label('QR Code Data')
-                            ->disabled(),
-                    ])
-                    ->columns(2)
-                    ->visible(fn ($context) => $context === 'view' || $context === 'edit'),
-            ]);
-    }
-
     public static function table(Table $table): Table
     {
         return $table
+            ->query(
+                Approval::query()
+                    ->with(['request', 'user'])
+                    ->when(
+                        !auth()->user()->can('view_all_requests'),
+                        fn (Builder $query) => $query->where('user_id', auth()->id())
+                    )
+            )
             ->columns([
                 Tables\Columns\TextColumn::make('request.request_number')
                     ->label('Request Number')
@@ -127,6 +77,29 @@ class ApprovalResource extends Resource
                         'warning' => 'pending',
                         'success' => 'approved',
                         'danger' => 'rejected',
+                        'gray' => 'cancelled',                    // ✅ NEW
+                        'orange' => 'revision_requested',        // ✅ NEW
+                    ])
+                    ->formatStateUsing(fn (string $state): string => match ($state) {
+                        'pending' => 'Pending',
+                        'approved' => 'Approved',
+                        'rejected' => 'Rejected',
+                        'cancelled' => 'Cancelled',              // ✅ NEW
+                        'revision_requested' => 'Revision Requested', // ✅ NEW
+                        default => $state,
+                    }),
+
+                Tables\Columns\BadgeColumn::make('request.status')
+                    ->label('Request Status')
+                    ->colors([
+                        'secondary' => 'draft',
+                        'warning' => 'submitted',
+                        'info' => 'section_approved',
+                        'primary' => 'scm_approved',
+                        'success' => 'completed',
+                        'danger' => 'rejected',
+                        'gray' => 'cancelled',                    // ✅ NEW
+                        'orange' => 'revision_requested',        // ✅ NEW
                     ]),
 
                 Tables\Columns\TextColumn::make('approved_at')
@@ -155,6 +128,8 @@ class ApprovalResource extends Resource
                         'pending' => 'Pending',
                         'approved' => 'Approved',
                         'rejected' => 'Rejected',
+                        'cancelled' => 'Cancelled',                    // ✅ NEW
+                        'revision_requested' => 'Revision Requested', // ✅ NEW
                     ]),
 
                 SelectFilter::make('role')
@@ -174,11 +149,14 @@ class ApprovalResource extends Resource
                         'scm_approved' => 'SCM Approved',
                         'completed' => 'Completed',
                         'rejected' => 'Rejected',
+                        'cancelled' => 'Cancelled',                    // ✅ NEW
+                        'revision_requested' => 'Revision Requested', // ✅ NEW
                     ]),
             ])
             ->actions([
                 Tables\Actions\ViewAction::make(),
 
+                // ✅ APPROVE ACTION
                 Action::make('approve')
                     ->icon('heroicon-o-check')
                     ->color('success')
@@ -204,6 +182,7 @@ class ApprovalResource extends Resource
                             ->send();
                     }),
 
+                // ✅ REJECT ACTION
                 Action::make('reject')
                     ->icon('heroicon-o-x-mark')
                     ->color('danger')
@@ -230,6 +209,42 @@ class ApprovalResource extends Resource
                             ->send();
                     }),
 
+                // ✅ NEW: REQUEST REVISION ACTION
+                Action::make('requestRevision')
+                    ->label('Request Revision')
+                    ->icon('heroicon-o-arrow-path')
+                    ->color('warning')
+                    ->visible(fn (Approval $record): bool => 
+                        $record->status === 'pending' && 
+                        $record->canBeApprovedBy(auth()->user())
+                    )
+                    ->requiresConfirmation()
+                    ->modalHeading('Request Revision')
+                    ->modalDescription('This will send the request back to the requester for revision.')
+                    ->form([
+                        Forms\Components\Textarea::make('revision_reason')
+                            ->label('Revision Reason')
+                            ->placeholder('Please explain what needs to be revised...')
+                            ->required()
+                            ->rows(4),
+                    ])
+                    ->action(function (Approval $record, array $data) {
+                        $success = $record->request->requestRevision(auth()->user(), $data['revision_reason']);
+                        
+                        if ($success) {
+                            Notification::make()
+                                ->title('Revision requested successfully')
+                                ->warning()
+                                ->send();
+                        } else {
+                            Notification::make()
+                                ->title('Failed to request revision')
+                                ->danger()
+                                ->send();
+                        }
+                    }),
+
+                // ✅ VIEW QR CODE ACTION
                 Action::make('viewQrCode')
                     ->label('View QR')
                     ->icon('heroicon-o-qr-code')
@@ -244,44 +259,14 @@ class ApprovalResource extends Resource
             ->bulkActions([
                 Tables\Actions\DeleteBulkAction::make()
                     ->visible(fn (): bool => auth()->user()->can('manage_system')),
-            ])
-            ->defaultSort('created_at', 'desc');
+            ]);
     }
 
-    public static function getEloquentQuery(): Builder
+    public static function getRelations(): array
     {
-        $query = parent::getEloquentQuery()->with(['request', 'user']);
-        $user = auth()->user();
-
-        // Admin bisa lihat semua
-        if ($user->can('view_all_requests')) {
-            return $query;
-        }
-
-        // Filter berdasarkan role approval yang bisa diakses user
-        return $query->where(function ($q) use ($user) {
-            if ($user->can('approve_section_requests')) {
-                $q->orWhere(function ($subQ) use ($user) {
-                    $subQ->where('role', 'section_head')
-                         ->whereHas('request', function ($requestQ) use ($user) {
-                             $requestQ->where('department_id', $user->department_id);
-                         });
-                });
-            }
-
-            if ($user->can('approve_scm_requests')) {
-                $q->orWhere('role', 'scm_head');
-            }
-
-            if ($user->can('approve_final_requests')) {
-                $q->orWhere('role', 'pjo');
-            }
-
-            // User juga bisa lihat approval untuk request mereka sendiri
-            $q->orWhereHas('request', function ($requestQ) use ($user) {
-                $requestQ->where('user_id', $user->id);
-            });
-        });
+        return [
+            //
+        ];
     }
 
     public static function getPages(): array
@@ -292,34 +277,5 @@ class ApprovalResource extends Resource
             'view' => Pages\ViewApproval::route('/{record}'),
             'edit' => Pages\EditApproval::route('/{record}/edit'),
         ];
-    }
-
-    public static function getNavigationBadge(): ?string
-    {
-        $user = auth()->user();
-        $count = 0;
-
-        if ($user->can('approve_section_requests')) {
-            $count += static::getEloquentQuery()
-                ->where('role', 'section_head')
-                ->where('status', 'pending')
-                ->count();
-        }
-
-        if ($user->can('approve_scm_requests')) {
-            $count += static::getEloquentQuery()
-                ->where('role', 'scm_head')
-                ->where('status', 'pending')
-                ->count();
-        }
-
-        if ($user->can('approve_final_requests')) {
-            $count += static::getEloquentQuery()
-                ->where('role', 'pjo')
-                ->where('status', 'pending')
-                ->count();
-        }
-
-        return $count > 0 ? (string) $count : null;
     }
 }

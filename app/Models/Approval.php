@@ -59,17 +59,34 @@ class Approval extends Model
         $this->request->update(['status' => 'rejected']);
     }
 
+    // ✅ FIXED: Sequential approval enforcement
     public function canBeApprovedBy(User $user): bool
     {
         if ($this->status !== 'pending') {
             return false;
         }
 
+        // ✅ CRITICAL: Check if request status allows this role to approve
+        $requestStatus = $this->request->status;
+        $allowedToApprove = match ($this->role) {
+            'section_head' => $requestStatus === 'submitted',
+            'scm_head' => $requestStatus === 'section_approved', 
+            'pjo' => $requestStatus === 'scm_approved',
+            default => false
+        };
+
+        if (!$allowedToApprove) {
+            return false;
+        }
+
+        // ✅ Then check user permissions and department/company constraints
         return match ($this->role) {
             'section_head' => $user->can('approve_section_requests') && 
-                            $user->department_id === $this->request->department_id,
+                            $user->department_id === $this->request->department_id &&
+                            $user->company_id === $this->request->company_id,
             'scm_head' => $user->can('approve_scm_requests'),
-            'pjo' => $user->can('approve_final_requests'),
+            'pjo' => $user->can('approve_final_requests') &&
+                    $user->company_id === $this->request->company_id,
             default => false
         };
     }
