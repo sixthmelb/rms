@@ -70,7 +70,7 @@ class RecentRequestsWidget extends BaseWidget
             ->actions([
                 Tables\Actions\Action::make('view')
                     ->label('View')
-                    ->url(fn (Request $record): string => "/admin/requests/{$record->id}/view")
+                    ->url(fn (Request $record): string => "/admin/requests/{$record->id}")
                     ->icon('heroicon-m-eye')
                     ->size('sm')
                     ->color('info'),

@@ -154,7 +154,7 @@ class ApprovalResource extends Resource
                     ]),
             ])
             ->actions([
-                Tables\Actions\ViewAction::make(),
+               // Tables\Actions\ViewAction::make(),
 
                 // ✅ APPROVE ACTION
                 Action::make('approve')
@@ -274,8 +274,8 @@ class ApprovalResource extends Resource
         return [
             'index' => Pages\ListApprovals::route('/'),
             'create' => Pages\CreateApproval::route('/create'),
-            'view' => Pages\ViewApproval::route('/{record}'),
-            'edit' => Pages\EditApproval::route('/{record}/edit'),
+            //'view' => Pages\ViewApproval::route('/{record}'),
+            //'edit' => Pages\EditApproval::route('/{record}/edit'),
         ];
     }
 }
